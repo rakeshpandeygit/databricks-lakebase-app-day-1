@@ -197,6 +197,42 @@ def add_to_watchlist():
     return jsonify({"symbol": symbol, "email": email, "latest_price": price})
 
 
+@app.route("/watchlist", methods=["DELETE"])
+def delete_from_watchlist():
+    """
+    Delete multiple ticker symbols from the current user's watchlist.
+    Expects a JSON payload with a 'symbols' array.
+    """
+    ensure_watchlist_table()
+
+    if not request.is_json:
+        return jsonify({"error": "Request must be JSON"}), 400
+
+    symbols = request.json.get("symbols", [])
+    if not isinstance(symbols, list) or len(symbols) == 0:
+        return jsonify({"error": "No symbols provided"}), 400
+
+    # Validate all symbols before deleting
+    invalid_symbols = [s for s in symbols if not isinstance(s, str) or not _TICKER_RE.match(s.strip().upper())]
+    if invalid_symbols:
+        return jsonify({"error": f"Invalid ticker symbols: {invalid_symbols}"}), 400
+
+    symbols = [s.strip().upper() for s in symbols]
+    email = _current_user_email()
+
+    # Use a parameterized query with IN clause to delete multiple rows
+    placeholders = ",".join(["%s"] * len(symbols))
+    deleted_count = lakebase.run_write(
+        f"""
+        DELETE FROM {WATCHLIST_TABLE_NAME}
+        WHERE email = %s AND symbol IN ({placeholders})
+        """,
+        (email, *symbols),
+    )
+
+    return jsonify({"deleted": deleted_count, "symbols": symbols})
+
+
 def _extract_latest_price(data: dict) -> float | None:
     """Pull the trade price out of the Massive 'previous close' response shape.
 
